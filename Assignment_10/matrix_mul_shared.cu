@@ -1,89 +1,83 @@
-#include <math.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include "timer.h"
-#include "files.h"
+#define row1 20
+#define col1 30
+#define row2 30
+#define col2 20
 
-#define SOFTENING 1e-9f
+__global__ void matproductsharedmemory(int *l, int *m, int *n)
+{
+    int x = blockIdx.x;
+    int y = blockIdx.y;
+    __shared__ int p[col1];
 
-__global__ void initMatrix(int *a, int val, int N){
+    int i;
+    int k = threadIdx.x;
 
-    int col = blockIdx.x * blockDim.x + threadIdx.x;  //col ind
-    int row = blockIdx.y * blockDim.y + threadIdx.y; //row ind
+    n[col2 * y + x] = 0;
 
-    if(row < N and col < N){
+    p[k] = l[col1 * y + k] * m[col2 * k + x];
 
-        a[row*N + col] = val;
-    }
+    __syncthreads();
+
+    for (i = 0; i < col1; i++)
+        n[col2 * y + x] = n[col2 * y + x] + p[i];
 }
 
-void check(int *a, int *b, int *c, int N){
-    int sum;
+int main()
+{
+    int a[row1][col1];
+    int b[row2][col2];
+    int c[row1][col2];
+    int *d, *e, *f;
+    int i, j;
 
-    for(int i=0; i<N; i++){
-        for(int j = 0; j<N; j++){
-            sum = 0;
-            for(int k = 0; k<N; k++){
-                sum += a[i* N + k] * b[k*N + i];
-            }
-
-            if(sum != c[i*N + j])
-                printf("wrong answer\n");
+    for (i = 0; i < row1; i++)
+    {
+        for (j = 0; j < col1; j++)
+        {
+            a[i][j] = 2;
         }
     }
 
-    printf("check successful\n");
-}
-
-__global__ void matrixMul(int *a, int *b, int *c, int N){
-    
-    __shared__ int col;
-    __shared__ int row;
-    col = blockIdx.x * blockDim.x + threadIdx.x;  //col ind
-    row = blockIdx.y * blockDim.y + threadIdx.y; //row ind
-
-    if(row < N and col < N){
-
-        int sum = 0;
-        for(int i=0; i<N; i++){
-            sum += a[row * N + i] * b[i*N + col];
+    for (i = 0; i < row2; i++)
+    {
+        for (j = 0; j < col2; j++)
+        {
+            b[i][j] = 3;
         }
-
-        c[row*N + col] = sum;
     }
 
-}
+    cudaMalloc((void **)&d, row1 * col1 * sizeof(int));
+    cudaMalloc((void **)&e, row2 * col2 * sizeof(int));
+    cudaMalloc((void **)&f, row1 * col2 * sizeof(int));
 
-int main(){
-    // Set our square matrix dimension (2%10 x 2*10 default)
-    
-    int N=1 << 10;
-    size_t bytes = N * N * sizeof(int);
+    cudaMemcpy(d, a, row1 * col1 * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(e, b, row2 * col2 * sizeof(int), cudaMemcpyHostToDevice);
 
-    // Allocate memory for our matrices
-    int *a, *b, *c;
-    
-    cudaMallocManaged(&a, bytes);
-    cudaMallocManaged(&b, bytes);
-    cudaMallocManaged(&c, bytes);
-    
-     int threads = 16;
-    int blocks = (N + threads - 1) / threads;
+    dim3 grid(col2, row1);
 
-    // kernel launch parameters
-    dim3 THREADS(threads, threads);
-    dim3 BLOCKS(blocks, blocks);
-
-    initMatrix<<<BLOCKS, THREADS>>>(a, 1, N);
-    initMatrix<<<BLOCKS, THREADS>>>(b, 1, N);
-
-       
-   
-
-    // Launch 
-    matrixMul<<<BLOCKS, THREADS>>>(a, b, c, N);
+    matproductsharedmemory<<<grid, col1>>>(d, e, f);
     cudaDeviceSynchronize();
 
-    check(a, b, c, N);
+    cudaMemcpy(c, f, row1 * col2 * sizeof(int), cudaMemcpyDeviceToHost);
 
+    for (i = 0; i < row1; i++)
+    {
+        for (j = 0; j < col2; j++)
+        {
+            if (c[i][j] != 180)
+            {
+                printf("False\n");
+                return -1;
+            }
+        }
+    }
+
+    cudaFree(d);
+    cudaFree(e);
+    cudaFree(f);
+
+    printf("True\n");
+    return 0;
 }
+
